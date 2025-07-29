@@ -86,22 +86,7 @@ export function useCaseResult(caseNum: number) {
     },
   });
 
-  // 調試信息
-  console.log(`useCaseResult for case ${caseNum}:`, {
-    result,
-    isLoading,
-    error,
-    caseNum: result?.caseNum,
-    caseStatus: result?.caseStatus,
-    currentWinner: result?.currentWinner,
-    voteCountA: result?.voteCountA,
-    voteCountB: result?.voteCountB,
-    voteEnded: result?.voteEnded,
-    existingCompensationA: result?.existingCompensationA,
-    existingCompensationB: result?.existingCompensationB,
-    allocationMode: result?.allocationMode,
-    currentTime: Math.floor(Date.now() / 1000)
-  });
+  // 調試信息已移除
 
   return {
     result,
@@ -251,9 +236,9 @@ export function useApproveERC20() {
     hash,
   });
 
-  const approveERC20 = (spender: `0x${string}`, amount: bigint) => {
+  const approveERC20 = (tokenAddress: `0x${string}`, spender: `0x${string}`, amount: bigint) => {
     writeContract({
-      address: FAKE_ERC20_ADDRESS,
+      address: tokenAddress,
       abi: FAKE_ERC20_ABI,
       functionName: 'approve',
       args: [spender, amount],
@@ -320,6 +305,26 @@ export function useCancelCase() {
 
   return {
     cancelCase,
+    isLoading: isPending,
+    error,
+  };
+}
+
+// 領取投票獎勵
+export function useClaimVotePool() {
+  const { writeContract, isPending, error } = useWriteContract();
+
+  const claimVotePool = (caseNum: number) => {
+    writeContract({
+      address: REAL_CONTRACT_ADDRESS as `0x${string}`,
+      abi: REAL_CONTRACT_ABI,
+      functionName: 'claimVotePool',
+      args: [BigInt(caseNum)],
+    });
+  };
+
+  return {
+    claimVotePool,
     isLoading: isPending,
     error,
   };

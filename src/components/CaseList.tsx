@@ -1,7 +1,26 @@
 import React, { useState, useEffect } from 'react';
 import { useAccount, useContractRead } from 'wagmi';
-import { useContractStatus, useCase, useCaseResult, useStakeCompensation, useStartCaseVoting, useExecuteCase, useApproveERC20, useERC20Allowance, useERC20Balance, useVote } from '../hooks/useRealContract';
-import { CaseStatus, type Case, FAKE_ERC20_ADDRESS, REAL_CONTRACT_ADDRESS, REAL_CONTRACT_ABI, FAKE_ERC20_ABI } from '../contracts/RealContract';
+import { 
+  useContractStatus, 
+  useCase, 
+  useCaseResult,
+  useStakeCompensation, 
+  useStartCaseVoting, 
+  useExecuteCase, 
+  useApproveERC20, 
+  useERC20Allowance, 
+  useERC20Balance, 
+  useVote,
+  useClaimVotePool
+} from '../hooks/useRealContract';
+import { 
+  REAL_CONTRACT_ABI, 
+  REAL_CONTRACT_ADDRESS, 
+  CaseStatus, 
+  FAKE_ERC20_ABI,
+  FAKE_ERC20_ADDRESS,
+  VOTE_TOKEN_ADDRESS
+} from '../contracts/RealContract';
 import { VOTER_ABI, VOTER_ADDRESS } from '../contracts/Voter';
 
 // 投票代幣授權組件
@@ -35,7 +54,7 @@ function VoteTokenApproval({ onApproved }: { onApproved: () => void }) {
           // 獲取投票代幣餘額
           const { data: balance } = await import('wagmi').then(wagmi => 
             wagmi.useContractRead({
-              address: FAKE_ERC20_ADDRESS as `0x${string}`,
+              address: VOTE_TOKEN_ADDRESS as `0x${string}`,
               abi: FAKE_ERC20_ABI,
               functionName: 'balanceOf',
               args: [address],
@@ -49,7 +68,7 @@ function VoteTokenApproval({ onApproved }: { onApproved: () => void }) {
           // 獲取授權額度
           const { data: allowance } = await import('wagmi').then(wagmi => 
             wagmi.useContractRead({
-              address: FAKE_ERC20_ADDRESS as `0x${string}`,
+              address: VOTE_TOKEN_ADDRESS as `0x${string}`,
               abi: FAKE_ERC20_ABI,
               functionName: 'allowance',
               args: [address, REAL_CONTRACT_ADDRESS as `0x${string}`],
@@ -75,7 +94,7 @@ function VoteTokenApproval({ onApproved }: { onApproved: () => void }) {
     if (!address || !voteTokenAmount) return;
     
     try {
-      await approveERC20(REAL_CONTRACT_ADDRESS as `0x${string}`, voteTokenAmount);
+      await approveERC20(VOTE_TOKEN_ADDRESS, REAL_CONTRACT_ADDRESS as `0x${string}`, voteTokenAmount);
       onApproved();
     } catch (error) {
       console.error('授權失敗:', error);
@@ -196,6 +215,27 @@ function CaseItem({ caseNum, onSelect, mode }: { caseNum: number; onSelect: () =
   const { case: caseData, isLoading } = useCase(caseNum);
   const { result: caseResult } = useCaseResult(caseNum);
   const { address } = useAccount();
+
+  // 分別獲取用戶的投票選擇和獎勵領取狀態（使用正確的用戶地址）
+  const { data: userVoteChoice } = useContractRead({
+    address: REAL_CONTRACT_ADDRESS as `0x${string}`,
+    abi: REAL_CONTRACT_ABI,
+    functionName: 'getCaseVoterChoice',
+    args: [BigInt(caseNum), address as `0x${string}`],
+    query: {
+      enabled: !!address && mode === 'voting' && (caseResult?.caseStatus === CaseStatus.Voting || caseResult?.caseStatus === CaseStatus.Executed),
+    },
+  });
+
+  const { data: userHasClaimed } = useContractRead({
+    address: REAL_CONTRACT_ADDRESS as `0x${string}`,
+    abi: REAL_CONTRACT_ABI,
+    functionName: 'getCaseVoterHasClaimed',
+    args: [BigInt(caseNum), address as `0x${string}`],
+    query: {
+      enabled: !!address && mode === 'voting' && (caseResult?.caseStatus === CaseStatus.Voting || caseResult?.caseStatus === CaseStatus.Executed),
+    },
+  });
   
   // 操作 hooks
   const { stakeCompensation, isLoading: isStaking } = useStakeCompensation();
@@ -203,10 +243,35 @@ function CaseItem({ caseNum, onSelect, mode }: { caseNum: number; onSelect: () =
   const { executeCase, isLoading: isExecuting } = useExecuteCase();
   const { approveERC20, isLoading: isApproving } = useApproveERC20();
   const { vote, isLoading: isVoting } = useVote();
-
+  const { claimVotePool, isLoading: isClaiming } = useClaimVotePool();
+  
   // ERC20 相關檢查
   const { allowance, refetch: refetchAllowance } = useERC20Allowance(address, REAL_CONTRACT_ADDRESS as `0x${string}`);
   const { balance } = useERC20Balance(address);
+
+  // 投票代幣相關檢查
+  const { data: voteTokenAmount } = useContractRead({
+    address: REAL_CONTRACT_ADDRESS as `0x${string}`,
+    abi: REAL_CONTRACT_ABI,
+    functionName: 'voteTokenAmount',
+  });
+
+  // 使用專門的 VoteToken 地址檢查餘額和授權
+  const voteTokenBalance = useContractRead({
+    address: VOTE_TOKEN_ADDRESS,
+    abi: FAKE_ERC20_ABI,
+    functionName: 'balanceOf',
+    args: address ? [address] : undefined,
+    query: { enabled: !!address },
+  });
+
+  const voteTokenAllowance = useContractRead({
+    address: VOTE_TOKEN_ADDRESS,
+    abi: FAKE_ERC20_ABI,  
+    functionName: 'allowance',
+    args: address ? [address, REAL_CONTRACT_ADDRESS] : undefined,
+    query: { enabled: !!address },
+  });
 
   // 檢查當前用戶是否為合約人
   const isParticipantA = address && caseData?.participantA.toLowerCase() === address.toLowerCase();
@@ -222,12 +287,14 @@ function CaseItem({ caseNum, onSelect, mode }: { caseNum: number; onSelect: () =
     execute: boolean;
     voteA: boolean;
     voteB: boolean;
+    claim: boolean;
   }>({
     stakeA: false,
     stakeB: false,
     approve: false,
     startVoting: false,
     execute: false,
+    claim: false,
     voteA: false,
     voteB: false,
   });
@@ -240,9 +307,14 @@ function CaseItem({ caseNum, onSelect, mode }: { caseNum: number; onSelect: () =
   const getRequiredAmount = (payA: boolean) => {
     if (!caseData) return BigInt(0);
     const baseAmount = payA ? caseData.compensationA : caseData.compensationB;
-    // 手續費率是 1% (100/10000)
+    // 手續費率是 1% (100/10000)，+1 FERC20 確保合約精度損失後仍足夠
     const fee = (baseAmount * BigInt(100)) / BigInt(10000);
-    return baseAmount + fee;
+    return baseAmount + fee + BigInt(10 ** 18); // 加 1 整顆 FERC20
+  };
+
+  // 格式化顯示金額（轉換為可讀的數字）
+  const formatRequiredAmount = (payA: boolean) => {
+    return Number(getRequiredAmount(payA)) / 1e18;
   };
 
   const getStakeAmount = (payA: boolean) => {
@@ -275,7 +347,7 @@ function CaseItem({ caseNum, onSelect, mode }: { caseNum: number; onSelect: () =
 
     // 計算總需要金額（用戶輸入的金額 + 手續費）
     const fee = (stakeAmount * BigInt(100)) / BigInt(10000); // 1% 手續費
-    const totalRequiredAmount = stakeAmount + fee;
+    const totalRequiredAmount = stakeAmount + fee + BigInt(10 ** 18); // +1 FERC20 確保合約精度損失後仍足夠
     
     // 檢查餘額
     if (balance < totalRequiredAmount) {
@@ -300,7 +372,7 @@ function CaseItem({ caseNum, onSelect, mode }: { caseNum: number; onSelect: () =
         // 授權當次要存入的金額
         const approveAmount = totalRequiredAmount;
         
-        await approveERC20(REAL_CONTRACT_ADDRESS as `0x${string}`, approveAmount);
+        await approveERC20(FAKE_ERC20_ADDRESS, REAL_CONTRACT_ADDRESS as `0x${string}`, approveAmount);
         
         // 等待授權交易確認，然後自動重試存入保證金
         setTimeout(async () => {
@@ -361,6 +433,13 @@ function CaseItem({ caseNum, onSelect, mode }: { caseNum: number; onSelect: () =
     executeCase(caseNum);
   };
 
+  // 處理領取投票獎勵
+  const handleClaimVotePool = (e: React.MouseEvent) => {
+    e.stopPropagation(); // 防止觸發案件選擇
+    setLocalPendingStates(prev => ({ ...prev, claim: true }));
+    claimVotePool(caseNum);
+  };
+
   // 處理投票給A
   const handleVoteForA = async (e: React.MouseEvent) => {
     e.stopPropagation(); // 防止觸發案件選擇
@@ -369,55 +448,59 @@ function CaseItem({ caseNum, onSelect, mode }: { caseNum: number; onSelect: () =
     setLocalPendingStates(prev => ({ ...prev, voteA: true }));
     
     try {
-      // 檢查投票代幣餘額和授權
-      const { data: voteTokenAmount } = await import('wagmi').then(wagmi => 
-        wagmi.useContractRead({
-          address: REAL_CONTRACT_ADDRESS as `0x${string}`,
-          abi: REAL_CONTRACT_ABI,
-          functionName: 'voteTokenAmount',
-        })
-      );
-      
-      if (voteTokenAmount) {
-        // 檢查投票代幣餘額
-        const { data: voteTokenBalance } = await import('wagmi').then(wagmi => 
-          wagmi.useContractRead({
-            address: FAKE_ERC20_ADDRESS as `0x${string}`,
-            abi: FAKE_ERC20_ABI,
-            functionName: 'balanceOf',
-            args: [address],
-          })
-        );
-        
-        if (voteTokenBalance && voteTokenBalance < voteTokenAmount) {
-          alert(`投票代幣餘額不足！需要 ${Number(voteTokenAmount) / 1e18} FERC20，當前餘額 ${Number(voteTokenBalance) / 1e18} FERC20`);
-          setLocalPendingStates(prev => ({ ...prev, voteA: false }));
-          return;
-        }
-        
-        // 檢查授權額度
-        const { data: voteTokenAllowance } = await import('wagmi').then(wagmi => 
-          wagmi.useContractRead({
-            address: FAKE_ERC20_ADDRESS as `0x${string}`,
-            abi: FAKE_ERC20_ABI,
-            functionName: 'allowance',
-            args: [address, REAL_CONTRACT_ADDRESS as `0x${string}`],
-          })
-        );
-        
-        if (voteTokenAllowance && voteTokenAllowance < voteTokenAmount) {
-          // 需要先授權
-          alert('需要先授權投票代幣，請點擊授權按鈕');
-          setLocalPendingStates(prev => ({ ...prev, voteA: false }));
-          return;
-        }
+      // 檢查投票代幣餘額
+      if (voteTokenAmount && voteTokenBalance.data && voteTokenBalance.data < voteTokenAmount) {
+        alert(`投票代幣餘額不足！需要 ${Number(voteTokenAmount) / 1e18} VoteToken，當前餘額 ${Number(voteTokenBalance.data) / 1e18} VoteToken`);
+        setLocalPendingStates(prev => ({ ...prev, voteA: false }));
+        return;
       }
       
-      // 執行投票
-      vote(caseNum, caseData.participantA);
+      // 檢查授權額度，如果不足就先授權再投票
+      console.log('=== 投票授權檢查 ===');
+      console.log('voteTokenAmount:', voteTokenAmount);
+      console.log('voteTokenAllowance.data:', voteTokenAllowance.data);
+      const needsApproval = voteTokenAmount && voteTokenAllowance.data !== undefined && voteTokenAllowance.data < voteTokenAmount;
+      console.log('需要授權:', needsApproval);
+      
+      if (needsApproval) {
+        console.log('授權額度不足，先進行 VoteToken 授權...');
+        console.log('授權地址:', VOTE_TOKEN_ADDRESS);
+        console.log('授權給:', REAL_CONTRACT_ADDRESS);
+        console.log('授權數量:', voteTokenAmount);
+        
+        // 設置授權pending狀態
+        setLocalPendingStates(prev => ({ ...prev, approve: true }));
+        
+        // 授權投票代幣
+        await approveERC20(VOTE_TOKEN_ADDRESS, REAL_CONTRACT_ADDRESS as `0x${string}`, voteTokenAmount);
+        
+        // 等待授權交易確認，然後自動重試投票
+        setTimeout(async () => {
+          try {
+            console.log('授權完成，現在執行投票...');
+            
+            // 重置授權pending狀態，保持投票pending狀態
+            setLocalPendingStates(prev => ({ 
+              ...prev, 
+              approve: false,
+              voteA: true 
+            }));
+            
+            vote(caseNum, caseData.participantA);
+          } catch (error) {
+            console.error('投票失敗:', error);
+            setLocalPendingStates(prev => ({ ...prev, voteA: false }));
+            alert('投票失敗，請稍後再試');
+          }
+        }, 3000); // 等待3秒讓授權交易確認
+      } else {
+        // 授權已足夠，直接執行投票
+        console.log('授權額度足夠，直接投票...');
+        vote(caseNum, caseData.participantA);
+      }
     } catch (error) {
       console.error('投票檢查失敗:', error);
-      setLocalPendingStates(prev => ({ ...prev, voteA: false }));
+      setLocalPendingStates(prev => ({ ...prev, voteA: false, approve: false }));
     }
   };
 
@@ -429,55 +512,59 @@ function CaseItem({ caseNum, onSelect, mode }: { caseNum: number; onSelect: () =
     setLocalPendingStates(prev => ({ ...prev, voteB: true }));
     
     try {
-      // 檢查投票代幣餘額和授權
-      const { data: voteTokenAmount } = await import('wagmi').then(wagmi => 
-        wagmi.useContractRead({
-          address: REAL_CONTRACT_ADDRESS as `0x${string}`,
-          abi: REAL_CONTRACT_ABI,
-          functionName: 'voteTokenAmount',
-        })
-      );
-      
-      if (voteTokenAmount) {
-        // 檢查投票代幣餘額
-        const { data: voteTokenBalance } = await import('wagmi').then(wagmi => 
-          wagmi.useContractRead({
-            address: FAKE_ERC20_ADDRESS as `0x${string}`,
-            abi: FAKE_ERC20_ABI,
-            functionName: 'balanceOf',
-            args: [address],
-          })
-        );
-        
-        if (voteTokenBalance && voteTokenBalance < voteTokenAmount) {
-          alert(`投票代幣餘額不足！需要 ${Number(voteTokenAmount) / 1e18} FERC20，當前餘額 ${Number(voteTokenBalance) / 1e18} FERC20`);
-          setLocalPendingStates(prev => ({ ...prev, voteB: false }));
-          return;
-        }
-        
-        // 檢查授權額度
-        const { data: voteTokenAllowance } = await import('wagmi').then(wagmi => 
-          wagmi.useContractRead({
-            address: FAKE_ERC20_ADDRESS as `0x${string}`,
-            abi: FAKE_ERC20_ABI,
-            functionName: 'allowance',
-            args: [address, REAL_CONTRACT_ADDRESS as `0x${string}`],
-          })
-        );
-        
-        if (voteTokenAllowance && voteTokenAllowance < voteTokenAmount) {
-          // 需要先授權
-          alert('需要先授權投票代幣，請點擊授權按鈕');
-          setLocalPendingStates(prev => ({ ...prev, voteB: false }));
-          return;
-        }
+      // 檢查投票代幣餘額
+      if (voteTokenAmount && voteTokenBalance.data && voteTokenBalance.data < voteTokenAmount) {
+        alert(`投票代幣餘額不足！需要 ${Number(voteTokenAmount) / 1e18} VoteToken，當前餘額 ${Number(voteTokenBalance.data) / 1e18} VoteToken`);
+        setLocalPendingStates(prev => ({ ...prev, voteB: false }));
+        return;
       }
       
-      // 執行投票
-      vote(caseNum, caseData.participantB);
+      // 檢查授權額度，如果不足就先授權再投票
+      console.log('=== 投票授權檢查 (B) ===');
+      console.log('voteTokenAmount:', voteTokenAmount);
+      console.log('voteTokenAllowance.data:', voteTokenAllowance.data);
+      const needsApproval = voteTokenAmount && voteTokenAllowance.data !== undefined && voteTokenAllowance.data < voteTokenAmount;
+      console.log('需要授權:', needsApproval);
+      
+      if (needsApproval) {
+        console.log('授權額度不足，先進行 VoteToken 授權...');
+        console.log('授權地址:', VOTE_TOKEN_ADDRESS);
+        console.log('授權給:', REAL_CONTRACT_ADDRESS);
+        console.log('授權數量:', voteTokenAmount);
+        
+        // 設置授權pending狀態
+        setLocalPendingStates(prev => ({ ...prev, approve: true }));
+        
+        // 授權投票代幣
+        await approveERC20(VOTE_TOKEN_ADDRESS, REAL_CONTRACT_ADDRESS as `0x${string}`, voteTokenAmount);
+        
+        // 等待授權交易確認，然後自動重試投票
+        setTimeout(async () => {
+          try {
+            console.log('授權完成，現在執行投票...');
+            
+            // 重置授權pending狀態，保持投票pending狀態
+            setLocalPendingStates(prev => ({ 
+              ...prev, 
+              approve: false,
+              voteB: true 
+            }));
+            
+            vote(caseNum, caseData.participantB);
+          } catch (error) {
+            console.error('投票失敗:', error);
+            setLocalPendingStates(prev => ({ ...prev, voteB: false }));
+            alert('投票失敗，請稍後再試');
+          }
+        }, 3000); // 等待3秒讓授權交易確認
+      } else {
+        // 授權已足夠，直接執行投票
+        console.log('授權額度足夠，直接投票...');
+        vote(caseNum, caseData.participantB);
+      }
     } catch (error) {
       console.error('投票檢查失敗:', error);
-      setLocalPendingStates(prev => ({ ...prev, voteB: false }));
+      setLocalPendingStates(prev => ({ ...prev, voteB: false, approve: false }));
     }
   };
 
@@ -515,6 +602,12 @@ function CaseItem({ caseNum, onSelect, mode }: { caseNum: number; onSelect: () =
     }
   }, [isVoting]);
 
+  useEffect(() => {
+    if (!isClaiming) {
+      setLocalPendingStates(prev => ({ ...prev, claim: false }));
+    }
+  }, [isClaiming]);
+
   if (isLoading) {
     return (
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 border border-gray-200 dark:border-gray-700">
@@ -550,10 +643,10 @@ function CaseItem({ caseNum, onSelect, mode }: { caseNum: number; onSelect: () =
         return '已激活';
       case CaseStatus.Voting:
         return '投票中';
+      case CaseStatus.Abandoned:
+        return '已放棄';
       case CaseStatus.Executed:
         return '已執行';
-      case CaseStatus.Cancelled:
-        return '已取消';
       default:
         return '未知';
     }
@@ -567,26 +660,17 @@ function CaseItem({ caseNum, onSelect, mode }: { caseNum: number; onSelect: () =
         return 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200';
       case CaseStatus.Voting:
         return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200';
+      case CaseStatus.Abandoned:
+        return 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200';
       case CaseStatus.Executed:
         return 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200';
-      case CaseStatus.Cancelled:
-        return 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200';
       default:
         return 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200';
     }
   };
 
-  // 獲取顯示狀態（優先判斷投票是否結束）
+  // 獲取顯示狀態（直接顯示合約返回的狀態）
   const getDisplayStatus = () => {
-    // 如果投票已結束，顯示"已完成"
-    if (caseResult?.voteEnded) {
-      return {
-        text: '已完成',
-        color: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
-      };
-    }
-    
-    // 否則使用原本的狀態邏輯
     return {
       text: getStatusText(caseData.status),
       color: getStatusColor(caseData.status)
@@ -607,6 +691,28 @@ function CaseItem({ caseNum, onSelect, mode }: { caseNum: number; onSelect: () =
     return Number(caseData.votingStartTime) + Number(caseData.votingDuration);
   };
 
+  // 實時檢查投票是否結束（不依賴合約 cache）
+  const [isVotingReallyEnded, setIsVotingReallyEnded] = useState(false);
+  
+  useEffect(() => {
+    if (!caseData || caseData.status !== CaseStatus.Voting) {
+      setIsVotingReallyEnded(false);
+      return;
+    }
+
+    const checkVotingEnd = () => {
+      if (!caseData) return;
+      const now = Math.floor(Date.now() / 1000);
+      const endTime = Number(caseData.votingStartTime) + Number(caseData.votingDuration);
+      setIsVotingReallyEnded(now >= endTime);
+    };
+
+    checkVotingEnd();
+    const interval = setInterval(checkVotingEnd, 1000);
+
+    return () => clearInterval(interval);
+  }, [caseData?.votingStartTime, caseData?.votingDuration, caseData?.status]);
+
   return (
     <div
       className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 hover:shadow-lg transition-shadow cursor-pointer border border-gray-200 dark:border-gray-700"
@@ -624,12 +730,6 @@ function CaseItem({ caseNum, onSelect, mode }: { caseNum: number; onSelect: () =
         <span className={`px-2 py-1 rounded-full text-xs font-medium ${getDisplayStatus().color}`}>
           {getDisplayStatus().text}
         </span>
-        {/* 右上角顯示 winner */}
-        {getDisplayStatus().text === '已完成' && caseData.winner && caseData.winner !== '0x0000000000000000000000000000000000000000' && (
-          <div className="mt-1 text-xs text-green-800 dark:text-green-200">
-            獲勝者: <span className="font-mono">{formatAddress(caseData.winner)}</span>
-          </div>
-        )}
       </div>
       
       <div className="grid grid-cols-2 gap-4 text-sm">
@@ -743,12 +843,6 @@ function CaseItem({ caseNum, onSelect, mode }: { caseNum: number; onSelect: () =
               </span>
             </div>
             <div>
-              <span className="text-gray-600 dark:text-gray-400">投票是否結束:</span>
-              <span className={`ml-1 ${caseResult.voteEnded ? 'text-green-600 dark:text-green-400' : 'text-yellow-600 dark:text-yellow-400'}`}>
-                {caseResult.voteEnded ? '是' : '否'}
-              </span>
-            </div>
-            <div>
               <span className="text-gray-600 dark:text-gray-400">A得票數:</span>
               <span className="ml-1 text-gray-900 dark:text-gray-100">{Number(caseResult.voteCountA)}</span>
             </div>
@@ -774,6 +868,56 @@ function CaseItem({ caseNum, onSelect, mode }: { caseNum: number; onSelect: () =
                 {Number(caseResult.allocationMode) === 0 ? '勝者全拿' : '按得票數比例分配'}
               </span>
             </div>
+            {/* 以下字段只在待投票模式下顯示 */}
+            {mode === 'voting' && (
+              <>
+                <div>
+                  <span className="text-gray-600 dark:text-gray-400">我的投票:</span>
+                  <span className="ml-1 text-gray-900 dark:text-gray-100">
+                    {(() => {
+                      const voteChoice = userVoteChoice;
+                      if (!voteChoice || voteChoice === '0x0000000000000000000000000000000000000000') {
+                        return '未投票';
+                      }
+                      if (voteChoice === caseData?.participantA) {
+                        return 'A (' + formatAddress(voteChoice) + ')';
+                      }
+                      if (voteChoice === caseData?.participantB) {
+                        return 'B (' + formatAddress(voteChoice) + ')';
+                      }
+                      return formatAddress(voteChoice);
+                    })()}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-gray-600 dark:text-gray-400">已領取獎勵:</span>
+                                  <span className={`ml-1 ${userHasClaimed ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                    {userHasClaimed ? '是' : '否'}
+                  </span>
+                </div>
+                
+                {/* 領取獎勵按鈕 - 只在待投票模式、投票選擇等於當前勝者、且未領取獎勵時顯示 */}
+                {userVoteChoice && 
+                 userVoteChoice !== '0x0000000000000000000000000000000000000000' &&
+                 userVoteChoice === caseResult?.currentWinner && 
+                 !userHasClaimed &&
+                 (caseResult?.voteEnded || isVotingReallyEnded) && (
+                  <div className="mt-3">
+                    <button
+                      onClick={handleClaimVotePool}
+                      disabled={localPendingStates.claim}
+                      className={`px-4 py-2 rounded-md transition-colors text-sm ${
+                        localPendingStates.claim
+                          ? 'bg-gray-400 dark:bg-gray-600 text-gray-200 dark:text-gray-300 cursor-not-allowed'
+                          : 'bg-green-600 dark:bg-[#7ee787] text-white hover:bg-green-700 dark:hover:bg-[#6bdd75]'
+                      }`}
+                    >
+                      {localPendingStates.claim ? '領取中...' : '領取投票獎勵'}
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
             <div>
               <span className="text-gray-600 dark:text-gray-400">總保證金:</span>
               <span className="ml-1 text-gray-900 dark:text-gray-100">
@@ -784,27 +928,21 @@ function CaseItem({ caseNum, onSelect, mode }: { caseNum: number; onSelect: () =
         </div>
       )}
 
-      {/* 只在投票結束後顯示獲勝者信息 */}
-      {caseResult?.voteEnded && caseData.winner && caseData.winner !== '0x0000000000000000000000000000000000000000' && (
-        <div className="mt-4 p-3 bg-green-50 dark:bg-green-900/20 rounded-md">
-          <p className="text-sm text-green-800 dark:text-green-200">
-            獲勝者: <span className="font-mono">{formatAddress(caseData.winner)}</span>
-          </p>
-        </div>
-      )}
+
 
       {/* 操作按鈕區域 - 個人案件模式且為合約人時顯示 */}
       {mode === 'personal' && isCurrentParticipant && (
         <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
 
           <div className="flex flex-col gap-3">
-            {/* 未激活狀態：顯示存入保證金按鈕 */}
-            {caseData.status === CaseStatus.Inactivated && (
+            {/* 未激活或已激活狀態：顯示存入保證金按鈕 */}
+            {(caseData.status === CaseStatus.Inactivated || caseData.status === CaseStatus.Activated) && (
               <>
-                {isParticipantA && !caseData.isPaidA && (
+                {isParticipantA && (
                   <div className="flex flex-col gap-2">
                     <div className="text-sm text-gray-600 dark:text-gray-400">
-                      合約激活所需合約金額(含手續費): {Number(caseData.compensationA + (caseData.compensationA * BigInt(100)) / BigInt(10000)) / 1e18} FERC20
+                      合約激活所需合約金額(含手續費): {formatRequiredAmount(true)} FERC20
+                      {caseData.isPaidA ? <span className="ml-2 text-green-600 dark:text-green-400">✓ 已完成基本保證金</span> : null}
                     </div>
                     <div className="flex items-center gap-2">
                       <input
@@ -829,12 +967,16 @@ function CaseItem({ caseNum, onSelect, mode }: { caseNum: number; onSelect: () =
                         {localPendingStates.stakeA ? '存入中...' : localPendingStates.approve ? '授權中...' : '存入 A'}
                       </button>
                     </div>
+                    <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      💡 注意：實際扣款會額外收取 1% 手續費
+                    </div>
                   </div>
                 )}
-                {isParticipantB && !caseData.isPaidB && (
+                {isParticipantB && (
                   <div className="flex flex-col gap-2">
                     <div className="text-sm text-gray-600 dark:text-gray-400">
-                      合約激活所需合約金額(含手續費): {Number(caseData.compensationB + (caseData.compensationB * BigInt(100)) / BigInt(10000)) / 1e18} FERC20
+                      合約激活所需合約金額(含手續費): {formatRequiredAmount(false)} FERC20
+                      {caseData.isPaidB ? <span className="ml-2 text-green-600 dark:text-green-400">✓ 已完成基本保證金</span> : null}
                     </div>
                     <div className="flex items-center gap-2">
                       <input
@@ -859,6 +1001,9 @@ function CaseItem({ caseNum, onSelect, mode }: { caseNum: number; onSelect: () =
                         {localPendingStates.stakeB ? '存入中...' : localPendingStates.approve ? '授權中...' : '存入 B'}
                       </button>
                     </div>
+                    <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      💡 注意：實際扣款會額外收取 1% 手續費
+                    </div>
                   </div>
                 )}
               </>
@@ -881,8 +1026,8 @@ function CaseItem({ caseNum, onSelect, mode }: { caseNum: number; onSelect: () =
 
 
 
-            {/* 投票中狀態：顯示執行案件按鈕（如果投票已結束） */}
-            {caseData.status === CaseStatus.Voting && caseResult?.voteEnded && (
+            {/* 投票中狀態：顯示執行案件按鈕（只在個人案件模式且投票已結束時顯示） */}
+            {mode === 'personal' && caseData.status === CaseStatus.Voting && (caseResult?.voteEnded || isVotingReallyEnded) && (
               <button
                 onClick={handleExecuteCase}
                 disabled={localPendingStates.execute}
@@ -900,7 +1045,7 @@ function CaseItem({ caseNum, onSelect, mode }: { caseNum: number; onSelect: () =
       )}
 
       {/* 投票按鈕區域 - 只在投票模式且案件狀態為投票中且投票未結束時顯示 */}
-      {mode === 'voting' && caseData.status === CaseStatus.Voting && !caseResult?.voteEnded && (
+      {mode === 'voting' && caseData.status === CaseStatus.Voting && !caseResult?.voteEnded && !isVotingReallyEnded && (
         <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
           <div className="mb-3 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-md">
             <p className="text-sm text-blue-800 dark:text-blue-200 mb-2">
@@ -913,34 +1058,31 @@ function CaseItem({ caseNum, onSelect, mode }: { caseNum: number; onSelect: () =
           </div>
           
           {/* 投票代幣授權檢查 */}
-          <VoteTokenApproval 
-            onApproved={() => {
-              // 授權成功後可以刷新狀態
-            }}
-          />
+          {/* Removed VoteTokenApproval component */}
           
+          {/* 投票按鈕 */}
           <div className="flex flex-wrap gap-2">
             <button
               onClick={handleVoteForA}
-              disabled={localPendingStates.voteA || localPendingStates.voteB}
+              disabled={localPendingStates.voteA || localPendingStates.voteB || localPendingStates.approve}
               className={`px-4 py-2 rounded-md transition-colors text-sm ${
-                localPendingStates.voteA || localPendingStates.voteB
+                localPendingStates.voteA || localPendingStates.voteB || localPendingStates.approve
                   ? 'bg-gray-400 dark:bg-gray-600 text-gray-200 dark:text-gray-300 cursor-not-allowed'
                   : 'bg-blue-600 dark:bg-[#58a6ff] text-white hover:bg-blue-700 dark:hover:bg-[#4a9eff]'
               }`}
             >
-              {localPendingStates.voteA ? '投票中...' : '投票給 A'}
+              {localPendingStates.approve ? '授權中...' : localPendingStates.voteA ? '投票中...' : '投票給 A'}
             </button>
             <button
               onClick={handleVoteForB}
-              disabled={localPendingStates.voteA || localPendingStates.voteB}
+              disabled={localPendingStates.voteA || localPendingStates.voteB || localPendingStates.approve}
               className={`px-4 py-2 rounded-md transition-colors text-sm ${
-                localPendingStates.voteA || localPendingStates.voteB
+                localPendingStates.voteA || localPendingStates.voteB || localPendingStates.approve
                   ? 'bg-gray-400 dark:bg-gray-600 text-gray-200 dark:text-gray-300 cursor-not-allowed'
-                  : 'bg-green-600 dark:bg-[#7ee787] text-white hover:bg-green-700 dark:hover:bg-[#6bdd75]'
+                  : 'bg-red-600 dark:bg-[#f85149] text-white hover:bg-red-700 dark:hover:bg-[#e5463a]'
               }`}
             >
-              {localPendingStates.voteB ? '投票中...' : '投票給 B'}
+              {localPendingStates.approve ? '授權中...' : localPendingStates.voteB ? '投票中...' : '投票給 B'}
             </button>
           </div>
         </div>
@@ -1009,7 +1151,10 @@ export function CaseList({ onCaseSelect, mode }: CaseListProps) {
   };
 
   // 生成案件編號列表 - 只包含真正存在的案件
-  const allCaseNumbers = Array.from({ length: Number(currentCaseNum || 0) }, (_, i) => i + 1);
+  const allCaseNumbers = Array.from({ length: Number(currentCaseNum || 0) }, (_, i) => i);
+  
+  // 針對個人案件模式，反轉順序讓最新案件在上面
+  const sortedCaseNumbers = mode === 'personal' ? [...allCaseNumbers].reverse() : allCaseNumbers;
 
   // 如果是投票模式，先渲染所有案件，然後在 VotingCaseItem 中過濾
   if (mode === 'voting') {
@@ -1054,7 +1199,7 @@ export function CaseList({ onCaseSelect, mode }: CaseListProps) {
       </div>
 
       <PersonalCaseListContent 
-        allCaseNumbers={allCaseNumbers}
+        allCaseNumbers={sortedCaseNumbers}
         refreshKey={refreshKey}
         mode={mode}
         onCaseSelect={onCaseSelect}
@@ -1152,7 +1297,7 @@ function VotingCaseListContent({
   );
 }
 
-// 投票案件項目組件 - 顯示所有處於 Voting 狀態的案件
+// 投票案件項目組件 - 顯示所有處於 Voting 或 Executed 狀態的案件
 function VotingCaseItem({ caseNum, onSelect, mode, currentAddress }: { 
   caseNum: number; 
   onSelect: () => void; 
@@ -1178,8 +1323,8 @@ function VotingCaseItem({ caseNum, onSelect, mode, currentAddress }: {
     return null;
   }
   
-  // 只顯示處於 Voting 狀態的案件
-  if (caseData.status !== CaseStatus.Voting) {
+  // 顯示處於 Voting 或 Executed 狀態的案件
+  if (caseData.status !== CaseStatus.Voting && caseData.status !== CaseStatus.Executed) {
     return null;
   }
   

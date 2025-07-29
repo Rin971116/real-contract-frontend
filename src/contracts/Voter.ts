@@ -70,4 +70,4 @@ export const VOTER_ABI = [
   }
 ] as const;
 
-export const VOTER_ADDRESS = "0x22dad1ada86e7e37aae2792055ab1c9c32fe2c16"; 
+export const VOTER_ADDRESS = "0xE107c25a6939274Db7a3c10a6d0b75A700bA5cf2"; 

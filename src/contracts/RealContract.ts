@@ -501,6 +501,16 @@ export const REAL_CONTRACT_ABI = [
             "internalType": "uint256"
           },
           {
+            "name": "voteChoice",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "voterHasClaimed",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
             "name": "voteEnded",
             "type": "bool",
             "internalType": "bool"
@@ -511,6 +521,67 @@ export const REAL_CONTRACT_ABI = [
             "internalType": "uint256"
           }
         ]
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "name": "_caseNum",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "name": "claimVotePool",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "name": "caseNum",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "voter",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "name": "getCaseVoterChoice",
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "name": "caseNum",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "voter",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "name": "getCaseVoterHasClaimed",
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
       }
     ],
     "stateMutability": "view",
@@ -639,23 +710,24 @@ export const REAL_CONTRACT_ABI = [
 
 // 合約地址 - 需要根據實際部署更新
 // 部署的合約地址 (Sepolia 測試網)
-export const REAL_CONTRACT_ADDRESS = "0xe2637738db03dbdaed8853502bdd0d1fe95bcd11" as `0x${string}`;
+export const REAL_CONTRACT_ADDRESS = "0x7166b5aCE489950b7b89A6A4060290dD5Ec4eB31" as `0x${string}`;
 
 // 其他合約地址
-export const VOTER_ADDRESS = "0x22dad1ada86e7e37aae2792055ab1c9c32fe2c16";
-export const FAKE_ERC20_ADDRESS = "0x2f383a0b62f37e56ffc8dfc84a178f0324365b3e" as `0x${string}`;
+export const VOTER_ADDRESS = "0xE107c25a6939274Db7a3c10a6d0b75A700bA5cf2";
+export const FAKE_ERC20_ADDRESS = "0xDdDd56A2028705e11Ab2c7C853387d560c134BD9" as `0x${string}`;
+export const VOTE_TOKEN_ADDRESS = "0x7AAB8e06E9BbCC3265D5f3225995c60a24aD0a62" as `0x${string}`;
 
 // 測試參與者地址
 export const TEST_PARTICIPANT_A = "0x57a0cd579B0fb24f3282F69680eeE85E3e5bCD68";
 export const TEST_PARTICIPANT_B = "0x137C941D1097488cc9B454c362c768B7A837DA22";
 
-// 案件狀態枚舉
+// 案件狀態枚舉 (與合約ICaseManager.sol保持一致)
 export const CaseStatus = {
-  Inactivated: 0,
-  Activated: 1,
-  Voting: 2,
-  Executed: 3,
-  Cancelled: 4
+  Inactivated: 0,  // 未啟動
+  Activated: 1,    // 啟動
+  Voting: 2,       // 投票中
+  Abandoned: 3,    // 放棄
+  Executed: 4      // 已執行
 } as const;
 
 export type CaseStatus = typeof CaseStatus[keyof typeof CaseStatus];
